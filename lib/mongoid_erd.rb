@@ -1,12 +1,14 @@
 require "rviz"
 require "yaml"
-require "active_support/core_ext/string/inflections"
+require 'i18n'
+require 'active_support/lazy_load_hooks'
+require 'active_support/core_ext/string'
 
 class Fields
   attr_accessor :name, :erd_label, :type, :edge
   def as_row
     str = type == "function" ? '+ ' + name : '- ' + name
-    str += ":" + type unless type == "function"
+    str += ":" + type unless type == "function" if type
     str += ", #{erd_label}" if erd_label and erd_label.size > 0
     str
   end
@@ -20,7 +22,7 @@ class Model
   end
 
   def title
-    "- [#{name.camelize}:#{erd_label}] -"
+    "- [#{parent ? parent.camelize + '::' : ''}#{name.camelize}:#{erd_label}] -"
   end
 end
 
@@ -102,6 +104,7 @@ class MongoidErd
 
         if /^\s*def\s+(?<func_>[^#]+)\s*/ =~ line
           field_ = Fields.new
+          func_ = func_.gsub(/[{}]/, '')
           field_.name, field_.type = func_, 'function'
           self.parse_erd field_, line # parse erd attr and label
           # arbitrage link
@@ -114,9 +117,9 @@ class MongoidErd
         end
 
         # catch field
-        if /^\s*field\s+\:(?<name_>\w+)\s*\,.*\:?type\:?\s*(?<type_>[A-Za-z_0-9\:]+)/ =~ line
+        if /^\s*field\s+\:(?<name_>\w+).*/ =~ line #\:?type\:?\s*(?<type_>[A-Za-z_0-9\:]+)/ =~ line
           field_ = Fields.new
-          field_.name, field_.type = name_, type_
+          field_.name = name_ #, type_
           self.parse_erd field_, line # parse erd attr and label
           # arbitrage link
           if /\-\>\s*(?<name_>\w+)(\{(?<attrs_>.+)\})?/ =~ line
@@ -131,10 +134,19 @@ class MongoidErd
         if /^\s*(?<rel_>embeds_many|embeds_one|has_many|has_one|belongs_to|embedded_in)\s+\:(?<name_>\w+)\s*(\,.*\:?as\:?\s*(?<as_>\w+))?/ =~ line
           field_ = Fields.new
           field_.name, field_.type = rel_, name_
-          field_.name = "#{rel_} (as #{as_})" if as_
+          #field_.name = "#{rel_} (as #{as_})" if as_
           self.parse_erd field_, line # parse erd attr and label
           crt_model.fields << field_ 
           #if %w[belongs_to embedded_in embeds_one has_one].include? rel_
+
+          if %w[embeds_many has_many].include? rel_
+            name_ = name_.singularize
+          end
+
+          if /^.*\:class_name\s*=>\s*\'Steak\:\:(?<parent_>\w+)\s*.*/ =~ line
+            name_ = parent_
+          end
+
           field_.edge = [name_, '', {label: rel_, arrowhead: 'normal'}]
           #end
         end
@@ -182,7 +194,7 @@ class MongoidErd
       end
 
       include_it = false if @config[:exclude].include? crt_model.name
-      @models[crt_model.name] = crt_model if include_it
+      @models[crt_model.parent ? crt_model.parent.camelize + '::' + crt_model.name : crt_model.name] = crt_model if include_it
     end # open directory
     self
   end
@@ -191,17 +203,17 @@ class MongoidErd
     g = Rviz::Graph.new @config[:title], {rankdir: 'LR', dpi: 300}
 
     @models.each do |mname, model|
-      g.add_record(model.name.camelize, model.attrs)
-      g.node(model.name.camelize).add_row(model.title, true)
+      g.add_record((model.parent ? model.parent.camelize + '::' : '') + model.name.camelize, model.attrs)
+      g.node((model.parent ? model.parent.camelize + '::' : '') + model.name.camelize).add_row(model.title, true)
       model.fields.each do |field|
-        g.node(model.name.camelize).add_row(field.as_row, true, 'l')
+        g.node((model.parent ? model.parent.camelize + '::' : '') + model.name.camelize).add_row(field.as_row, true, 'l')
         if field.edge
           to_node, to_anchor, attrs = field.edge[0].underscore, field.edge[1], field.edge[2]
           unless @models[to_node]
             g.add(to_node.camelize, 'oval', {style:'filled', fillcolor:'grey', color:'grey'})
             to_anchor = ''
           end
-          g.link(model.name.camelize, field.as_row, to_node.camelize, to_anchor, attrs)
+          g.link((model.parent ? model.parent.camelize + '::' : '') + model.name.camelize, field.as_row, to_node.camelize, to_anchor, attrs)
         end
       end
 
@@ -210,7 +222,7 @@ class MongoidErd
         unless @models[model.parent]
           g.add(model.parent.camelize, 'oval', {style:'filled', fillcolor:'grey', color:'grey'})
         end
-        g.link(model.name.camelize, model.title, model.parent.camelize, '', {arrowhead: 'onormal'})
+        g.link((model.parent ? model.parent.camelize + '::' : '') + model.name.camelize, model.title, model.parent.camelize, '', {arrowhead: 'onormal'})
       end
     end
 
