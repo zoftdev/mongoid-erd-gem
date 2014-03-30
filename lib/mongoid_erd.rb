@@ -143,7 +143,10 @@ class MongoidErd
             name_ = name_.singularize
           end
 
-          if /^.*\:class_name\s*=>\s*\'Steak\:\:(?<parent_>\w+)\s*.*/ =~ line
+          
+          #if /^.*\:class_name\s*=>\s*\'Steak\:\:(?<parent_>\w+)\s*.*/ =~ line
+          # change to support  format: belongs_to :owner , class_name : "HpPerson",inverse_of: :hp_horses
+          if /^.*class_name\s*\:\s*[\'\"](?<parent_>\w+)\s*.*/ =~ line
             name_ = parent_
           end
 
